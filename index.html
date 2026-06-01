@@ -424,10 +424,10 @@ function viewToday(){
       + '<div class="field" style="min-width:0"><label style="min-width:26px">AM</label><input class="num" type="number" inputmode="decimal" step="0.1" data-field="wt-am" placeholder="—" value="'+amv+'"><span class="unit">lb</span></div>'
       + '<div class="field" style="min-width:0"><label style="min-width:26px">PM</label><input class="num" type="number" inputmode="decimal" step="0.1" data-field="wt-pm" placeholder="—" value="'+pmv+'"><span class="unit">lb</span></div>'
     + '</div>'
-    + '<div class="ex-scheme" style="margin-top:9px">'
-      + (dwt!=null? 'Tracking '+dwt.toFixed(1)+' lb'+(day.wt&&day.wt.am!=null?' (AM)':' (PM)') : 'log your morning weight for the trend')
+    + (function(){ var p=[]; if(day.wt&&day.wt.am!=null)p.push('AM '+day.wt.am.toFixed(1)); if(day.wt&&day.wt.pm!=null)p.push('PM '+day.wt.pm.toFixed(1)); return p.length? '<div class="ex-scheme" style="margin-top:9px; color:var(--green)">✓ saved · '+p.join('  ·  ')+' lb'+(swing!=null?'   (AM→PM '+(swing>=0?'+':'')+swing.toFixed(1)+')':'')+'</div>' : ''; })()
+    + '<div class="ex-scheme" style="margin-top:5px">'
+      + (dwt!=null? 'Trend uses your morning weight ('+dwt.toFixed(1)+' lb)' : 'log your morning weight for the trend')
       + (avg!=null? ' · 7-day avg '+avg.toFixed(1)+(toGo>0?' · '+toGo+' to goal':' · at/under goal') : '')
-      + (swing!=null? ' · AM→PM '+(swing>=0?'+':'')+swing.toFixed(1) : '')
     + '</div></div>';
 
   // quick protein add
@@ -570,9 +570,9 @@ function viewProgress(){
   var html='<div class="stack">';
   // weight summary
   html += '<div class="card"><span class="lbl">Weight · '+START_WT+' → '+GOAL+' lb</span>'
-    + '<div style="display:flex; align-items:baseline; gap:8px; margin-top:8px"><span class="big">'+(cur_w!=null?cur_w.toFixed(1):"—")+'</span><span class="sub">lb '+(avg!=null?"(7-day avg)":"(latest)")+'</span></div>'
+    + '<div style="display:flex; align-items:baseline; gap:8px; margin-top:8px"><span class="big">'+(cur_w!=null?cur_w.toFixed(1):"—")+'</span><span class="sub">lb '+(avg!=null?"(7-day avg · morning)":"(latest · morning)")+'</span></div>'
     + '<div class="gauge"><i style="width:'+prog+'%"></i></div>'
-    + '<div class="sub" style="display:flex; justify-content:space-between"><span>'+(cur_w!=null?lost.toFixed(1)+" lb down":"log weight to start")+'</span><span>'+(cur_w!=null?Math.max(0,(cur_w-GOAL)).toFixed(1)+" to go":"")+'</span></div></div>';
+    + '<div class="sub" style="display:flex; justify-content:space-between"><span>'+(cur_w==null?"log weight to start":(lost>=0?lost.toFixed(1)+" lb down":Math.abs(lost).toFixed(1)+" lb up"))+'</span><span>'+(cur_w!=null?Math.max(0,(cur_w-GOAL)).toFixed(1)+" to go":"")+'</span></div></div>';
 
   // weekly weight-loss summary (Mon–Sun)
   var ws = weeklySummary();
@@ -595,6 +595,7 @@ function viewProgress(){
     + '<tr><td style="border:none; color:var(--muted); font-size:11px">Week</td><td style="border:none; color:var(--muted); font-size:11px">Dates</td><td style="border:none; color:var(--muted); font-size:11px; text-align:right">Avg</td><td style="border:none; color:var(--muted); font-size:11px; text-align:right">Lost</td></tr>'
     + wkRows
     + '</table>'
+    + (!ws.hasData ? '<div class="note" style="margin-top:11px">No in-program weigh-ins yet — these rows fill in once you start logging from <b>Jun 1</b> (your block start). A weight you log before then is kept as your <b>baseline</b> and shows in the summary above, not in this table.</div>' : '')
     + '<div class="note" style="margin-top:11px">Weekly loss = change in your weekly average vs the week before (uses your morning weigh-in when logged). <b>Total lost: <span style="color:'+(ws.total>0?'var(--green)':'var(--text)')+'">'+totalStr+'</span></b></div>'
     + '</div>';
 
@@ -715,6 +716,7 @@ document.addEventListener("input", function(e){
   else if(f==="notes"){ day.notes=t.value; save(); }
   else if(f==="protein-set"){ var v=parseInt(t.value,10); day.protein=isNaN(v)?0:v; save(); }  // updates state; meter refreshes on next render
   else if(f==="steps"){ var s=parseInt(t.value,10); day.steps=isNaN(s)?null:s; save(); }
+  else if(f==="wt-am" || f==="wt-pm"){ if(!day.wt) day.wt={am:null,pm:null}; var w=parseFloat(t.value); w=isNaN(w)?null:w; if(f==="wt-am") day.wt.am=w; else day.wt.pm=w; save(); }  // live save; change handler re-renders the readout
 });
 // steps lives in Today weight row? add a dedicated steps input via the meter — handle 'steps' field on change too
 document.addEventListener("change", function(e){
