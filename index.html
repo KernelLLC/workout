@@ -275,7 +275,8 @@ function dayDiff(a,b){ var ms=fromKey(dkey(a)).getTime()-fromKey(dkey(b)).getTim
 function today(){ return new Date(); }
 
 function getDay(k){
-  if(!state.days[k]) state.days[k] = { water:0, weight:null, steps:null, protein:0, ex:{}, meals:{}, log:{}, notes:"" };
+  if(!state.days[k]) state.days[k] = { water:0, steps:null, protein:0, ex:{}, meals:{}, log:{}, notes:"", wt:{am:null,pm:null} };
+  if(!state.days[k].wt) state.days[k].wt = { am:(typeof state.days[k].weight==="number"?state.days[k].weight:null), pm:null };
   return state.days[k];
 }
 function save(){
@@ -302,6 +303,8 @@ async function load(){
       var s = window.localStorage.getItem(STORE_KEY); if(s) state.days = JSON.parse(s);
     } catch(e){ storeMode = "memory"; }
   }
+  // migrate any legacy single weight values into the AM/PM structure
+  for(var mk in state.days){ var md=state.days[mk]; if(md && !md.wt){ md.wt={am:(typeof md.weight==="number"?md.weight:null), pm:null}; } }
   // 3) Nothing persists — warn the user
   if(storeMode==="memory"){
     document.getElementById("storeWarn").innerHTML = '<div class="banner">Saving isn\'t available here, so progress is session-only. To keep your logs: use this inside the Claude app, or host the file and open it over https (see the notes I sent). You can also Export a backup from the Progress tab.</div>';
@@ -408,13 +411,23 @@ function viewToday(){
 
   // daily targets meters
   html += '<div class="row">'+waterMeter+protMeter+'</div>';
-  html += '<div class="row">'
-    + '<div class="meter"><div class="top"><span class="lbl">Steps</span><span class="goal">/ '+STEP_TARGET.toLocaleString()+'</span></div>'
+  html += '<div class="meter"><div class="top"><span class="lbl">Steps</span><span class="goal">/ '+STEP_TARGET.toLocaleString()+'</span></div>'
     + '<div class="field" style="margin-top:8px"><input class="num" type="number" inputmode="numeric" data-field="steps" placeholder="—" value="'+(day.steps!=null?day.steps:"")+'"></div>'
-    + '<div style="height:5px; background:var(--panel3); border-radius:3px; overflow:hidden; margin-top:9px"><i style="display:block; height:100%; width:'+pct(stepsVal,STEP_TARGET)+'%; background:'+(pct(stepsVal,STEP_TARGET)>=100?'var(--green)':'var(--orange)')+'; border-radius:3px"></i></div></div>'
-    + '<div class="meter"><div class="top"><span class="lbl">Weight</span></div>'
-    + '<div class="field" style="margin-top:8px"><input class="num" type="number" inputmode="decimal" step="0.1" data-field="weight" placeholder="—" value="'+(day.weight!=null?day.weight:"")+'"><span class="unit">lb</span></div>'
-    + (avg!=null? '<div class="ex-scheme" style="margin-top:7px">7-day avg '+avg.toFixed(1)+' lb · '+(toGo>0?toGo+' to goal':'at/under goal')+'</div>':'<div class="ex-scheme" style="margin-top:7px">log daily for a trend</div>')
+    + '<div style="height:5px; background:var(--panel3); border-radius:3px; overflow:hidden; margin-top:9px"><i style="display:block; height:100%; width:'+pct(stepsVal,STEP_TARGET)+'%; background:'+(pct(stepsVal,STEP_TARGET)>=100?'var(--green)':'var(--orange)')+'; border-radius:3px"></i></div></div>';
+
+  var amv = (day.wt&&day.wt.am!=null)? day.wt.am : "";
+  var pmv = (day.wt&&day.wt.pm!=null)? day.wt.pm : "";
+  var dwt = dailyWeight(day);
+  var swing = (day.wt&&day.wt.am!=null&&day.wt.pm!=null)? (day.wt.pm-day.wt.am) : null;
+  html += '<div class="card"><span class="lbl">Weight · log morning &amp; evening</span>'
+    + '<div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:9px">'
+      + '<div class="field" style="min-width:0"><label style="min-width:26px">AM</label><input class="num" type="number" inputmode="decimal" step="0.1" data-field="wt-am" placeholder="—" value="'+amv+'"><span class="unit">lb</span></div>'
+      + '<div class="field" style="min-width:0"><label style="min-width:26px">PM</label><input class="num" type="number" inputmode="decimal" step="0.1" data-field="wt-pm" placeholder="—" value="'+pmv+'"><span class="unit">lb</span></div>'
+    + '</div>'
+    + '<div class="ex-scheme" style="margin-top:9px">'
+      + (dwt!=null? 'Tracking '+dwt.toFixed(1)+' lb'+(day.wt&&day.wt.am!=null?' (AM)':' (PM)') : 'log your morning weight for the trend')
+      + (avg!=null? ' · 7-day avg '+avg.toFixed(1)+(toGo>0?' · '+toGo+' to goal':' · at/under goal') : '')
+      + (swing!=null? ' · AM→PM '+(swing>=0?'+':'')+swing.toFixed(1) : '')
     + '</div></div>';
 
   // quick protein add
@@ -561,6 +574,30 @@ function viewProgress(){
     + '<div class="gauge"><i style="width:'+prog+'%"></i></div>'
     + '<div class="sub" style="display:flex; justify-content:space-between"><span>'+(cur_w!=null?lost.toFixed(1)+" lb down":"log weight to start")+'</span><span>'+(cur_w!=null?Math.max(0,(cur_w-GOAL)).toFixed(1)+" to go":"")+'</span></div></div>';
 
+  // weekly weight-loss summary (Mon–Sun)
+  var ws = weeklySummary();
+  var monsW=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  var wkRows="";
+  for(var wi=0; wi<ws.rows.length; wi++){
+    var rr=ws.rows[wi];
+    var sameMo = rr.start.getMonth()===rr.end.getMonth();
+    var range = monsW[rr.start.getMonth()]+" "+rr.start.getDate()+"–"+(sameMo? rr.end.getDate() : monsW[rr.end.getMonth()]+" "+rr.end.getDate());
+    var lostCell;
+    if(rr.lost==null) lostCell='<span style="color:var(--dim)">—</span>';
+    else if(rr.lost>=0.05) lostCell='<span style="color:var(--green)">−'+rr.lost.toFixed(1)+'</span>';
+    else if(rr.lost<=-0.05) lostCell='<span style="color:var(--amber)">+'+Math.abs(rr.lost).toFixed(1)+'</span>';
+    else lostCell='<span style="color:var(--muted)">0.0</span>';
+    wkRows += '<tr><td style="font-family:var(--mono); color:var(--orange)">W'+rr.w+'</td><td class="sub">'+range+'</td><td style="text-align:right; font-family:var(--mono)">'+(rr.rep!=null?rr.rep.toFixed(1):'<span style="color:var(--dim)">—</span>')+'</td><td style="text-align:right; font-family:var(--mono)">'+lostCell+'</td></tr>';
+  }
+  var totalStr = ws.hasData? ((ws.total>0?'−':(ws.total<0?'+':''))+Math.abs(ws.total).toFixed(1)+' lb') : '—';
+  html += '<div class="card"><span class="lbl">Weekly weight loss · Mon–Sun</span>'
+    + '<table class="cheat" style="margin-top:10px">'
+    + '<tr><td style="border:none; color:var(--muted); font-size:11px">Week</td><td style="border:none; color:var(--muted); font-size:11px">Dates</td><td style="border:none; color:var(--muted); font-size:11px; text-align:right">Avg</td><td style="border:none; color:var(--muted); font-size:11px; text-align:right">Lost</td></tr>'
+    + wkRows
+    + '</table>'
+    + '<div class="note" style="margin-top:11px">Weekly loss = change in your weekly average vs the week before (uses your morning weigh-in when logged). <b>Total lost: <span style="color:'+(ws.total>0?'var(--green)':'var(--text)')+'">'+totalStr+'</span></b></div>'
+    + '</div>';
+
   // chart
   html += '<div class="card"><span class="lbl">Weight trend</span><div class="chartbox"><canvas id="wchart" width="900" height="360" style="width:100%; height:auto; display:block; margin-top:8px"></canvas></div><div class="sub mono" style="font-size:10.5px; margin-top:6px"><span style="color:var(--orange)">— daily</span> &nbsp; <span style="color:var(--green)">— 7-day avg</span></div></div>';
 
@@ -580,11 +617,25 @@ function viewProgress(){
   return html;
 }
 
-function latestWeight(){ for(var i=0;i<120;i++){ var c=addDays(today(),-i), dy=state.days[dkey(c)]; if(dy&&dy.weight!=null) return dy.weight; } return null; }
+function dailyWeight(d){ if(!d) return null; if(d.wt){ if(d.wt.am!=null) return d.wt.am; if(d.wt.pm!=null) return d.wt.pm; } if(typeof d.weight==="number") return d.weight; return null; }
+function latestWeight(){ for(var i=0;i<120;i++){ var c=addDays(today(),-i), v=dailyWeight(state.days[dkey(c)]); if(v!=null) return v; } return null; }
 function sevenDayAvg(d){
   var sum=0,n=0;
-  for(var i=0;i<7;i++){ var c=addDays(d,-i), dy=state.days[dkey(c)]; if(dy&&dy.weight!=null){ sum+=dy.weight; n++; } }
+  for(var i=0;i<7;i++){ var c=addDays(d,-i), v=dailyWeight(state.days[dkey(c)]); if(v!=null){ sum+=v; n++; } }
   return n? sum/n : null;
+}
+function weeklySummary(){
+  var rows=[], prevRep=START_WT;
+  for(var w=0; w<WEEKS; w++){
+    var wkStart=addDays(START, w*7), vals=[];
+    for(var d=0; d<7; d++){ var v=dailyWeight(state.days[dkey(addDays(wkStart,d))]); if(v!=null) vals.push(v); }
+    var rep = vals.length? vals.reduce(function(a,b){return a+b;},0)/vals.length : null;
+    var lost = rep!=null? (prevRep-rep) : null;
+    rows.push({ w:w+1, start:wkStart, end:addDays(wkStart,6), rep:rep, n:vals.length, lost:lost });
+    if(rep!=null) prevRep=rep;
+  }
+  var hasData = rows.some(function(r){return r.rep!=null;});
+  return { rows:rows, latest:prevRep, hasData:hasData, total:(START_WT-prevRep) };
 }
 
 function drawChart(){
@@ -593,7 +644,7 @@ function drawChart(){
   ctx.clearRect(0,0,W,H);
   // gather points across program window (+ a little before)
   var pts=[];
-  for(var i=0;i<70;i++){ var c=addDays(START,i-3); var dy=state.days[dkey(c)]; if(dy&&dy.weight!=null) pts.push({x:dayDiff(c,START), w:dy.weight}); }
+  for(var i=0;i<70;i++){ var c=addDays(START,i-3); var v=dailyWeight(state.days[dkey(c)]); if(v!=null) pts.push({x:dayDiff(c,START), w:v}); }
   var padL=46,padR=14,padT=16,padB=24;
   var x0=padL, x1=W-padR, y0=padT, y1=H-padB;
   var minD=-3, maxD=WEEKS*7;
@@ -651,9 +702,11 @@ document.addEventListener("click", function(e){
 // numeric / text fields
 document.addEventListener("change", function(e){
   var t=e.target; if(!t.dataset || !t.dataset.field) return;
-  var f=t.dataset.field; if(f!=="weight" && f!=="protein-set" && f!=="steps") return;
-  var day=getDay(dkey(state.sel));
-  if(f==="weight"){ var v=parseFloat(t.value); day.weight = isNaN(v)? null : v; save(); render(); }
+  var f=t.dataset.field; if(f!=="wt-am" && f!=="wt-pm") return;
+  var day=getDay(dkey(state.sel)); if(!day.wt) day.wt={am:null,pm:null};
+  var v=parseFloat(t.value); v=isNaN(v)?null:v;
+  if(f==="wt-am") day.wt.am=v; else day.wt.pm=v;
+  save(); render();
 });
 document.addEventListener("input", function(e){
   var t=e.target; if(!t.dataset || !t.dataset.field) return;
